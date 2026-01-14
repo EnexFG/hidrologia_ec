@@ -7,7 +7,6 @@ from matplotlib.lines import Line2D
 import matplotlib.dates as mdates
 import os
 
-# ===== Estilo visual (no requiere seaborn instalado) =====
 plt.style.use("seaborn-v0_8-whitegrid")
 
 st.set_page_config(page_title="Hidrología EC", layout="wide")
@@ -41,7 +40,7 @@ if not value_cols:
     st.write("Columnas detectadas:", cols)
     st.stop()
 
-default_station = "CotaMaz"  # <- pon aquí el nombre exacto de tu columna preferida
+default_station = "CotaMaz" 
 
 default_index = value_cols.index(default_station) if default_station in value_cols else 0
 station = st.selectbox("Cota/Caudal:", value_cols, index=default_index)
@@ -57,28 +56,22 @@ if not selected_years:
     st.info("Selecciona al menos un año.")
     st.stop()
 
-# Preparación base
 df_plot = df[df["year"].isin(selected_years)][["year", "month", "day", station]].copy()
 df_plot[station] = df_plot[station].replace(0, pd.NA)
 
-# Normalizar month/day a string con cero a la izquierda
 df_plot["month"] = df_plot["month"].astype(int).astype(str).str.zfill(2)
 df_plot["day"] = df_plot["day"].astype(int).astype(str).str.zfill(2)
 
-# MultiIndex para el eje X: (mes_abrev, dia)
 df_plot["month_name"] = df_plot["month"].map(meses_abrev)
 df_plot["day_int"] = df_plot["day"].astype(int)
 
-# Orden natural por mes/día usando un "doy" auxiliar (año no bisiesto)
 md = df_plot["month"] + "-" + df_plot["day"]
 df_plot["date_dummy"] = pd.to_datetime(md, format="%m-%d", errors="coerce")
 df_plot["doy"] = df_plot["date_dummy"].dt.dayofyear
 
-# Pivot por doy (para graficar fácil y consistente)
 pivot = df_plot.pivot_table(index="doy", columns="year", values=station).sort_index()
 
-# También construimos el MultiIndex (mes,día) para el eje X “semántico”
-# (mapeando doy -> (mes_abrev, dia))
+
 doy_to_md = (
     df_plot.dropna(subset=["doy"])
            .drop_duplicates(subset=["doy"])
@@ -86,11 +79,9 @@ doy_to_md = (
            .sort_index()
 )
 
-# Aseguramos cobertura para los doy del pivot
 doy_index = pivot.index.astype(int)
 md_for_doy = doy_to_md.reindex(doy_index)
 
-# Si faltan algunos, hacemos fallback con fecha dummy desde doy (año 2001)
 missing = md_for_doy["month"].isna()
 if missing.any():
     base = pd.date_range("2001-01-01", "2001-12-31", freq="D")
@@ -127,7 +118,6 @@ for y in selected_years:
 ax1.set_ylabel(station)
 ax1.grid(True, alpha=0.3)
 
-# --- Eje X estilo Excel: días (ticks) + meses (segunda fila) ---
 dias_mostrar = {1, 10, 22}
 day_tick_pos = [i for i, d in enumerate(x_day) if int(d) in dias_mostrar]
 day_tick_lab = [str(int(x_day[i])) for i in day_tick_pos]
@@ -154,7 +144,6 @@ secax.set_xticklabels(month_labels)
 ax1.set_xlabel("")
 secax.set_xlabel("")
 
-# leyenda fuera para que no tape líneas
 ax1.legend(
     ncols=min(6, max(1, len(selected_years))),
     loc="upper left",
@@ -167,25 +156,22 @@ st.pyplot(fig1)
 st.markdown("---")
 
 # ------------------------
-# GRÁFICO 2 (una sola línea continua, segmentos por año con colores distintos)
+# GRÁFICO 2
 # ------------------------
 unidad = "(msnm)" if station.strip().startswith("Cota") else "(m^3/s)"
 st.subheader(f"{station.strip()} {unidad} - Serie Histórica")
 
-# 1. Filtramos el DF original directamente (sin pivotear)
-# Usamos las filas que correspondan a los años seleccionados
+
 mask_years = df["year"].isin(selected_years)
 df_ts = df[mask_years].copy()
 
-# 2. Creamos la columna fecha directamente usando las columnas existentes
-# Pandas es muy inteligente: si le pasas un DF con cols 'year', 'month', 'day', crea la fecha.
+
 try:
     df_ts["fecha"] = pd.to_datetime(df_ts[["year", "month", "day"]])
 except Exception as e:
     st.error(f"Error creando fechas: {e}. Verifica que las columnas year/month/day sean numéricas.")
     st.stop()
 
-# 3. Ordenamos por fecha y eliminamos nulos en la variable de interés
 df_ts = df_ts.sort_values("fecha")
 df_ts[station] = df_ts[station].replace(0, pd.NA)
 df_ts = df_ts.dropna(subset=[station])
@@ -194,26 +180,21 @@ if df_ts.empty:
     st.info("No hay datos para graficar en los años seleccionados.")
     st.stop()
 
-# 4. Preparamos datos para LineCollection (para mantener los colores por año)
-# Convertimos fechas a números de matplotlib
+
 x_nums = mdates.date2num(df_ts["fecha"])
 y_vals = df_ts[station].values
 years_vals = df_ts["year"].values
 
-# Creamos los puntos (x, y)
 points = np.column_stack([x_nums, y_vals])
 
-# Creamos los segmentos conectando i con i+1
 segments = np.stack((points[:-1], points[1:]), axis=1)
 
-# El color de cada segmento corresponde al año del punto inicial
-# Mapeamos los años a índices de color
+
 unique_years_ts = sorted(df_ts["year"].unique())
 year_to_idx = {yy: i for i, yy in enumerate(unique_years_ts)}
-# array de colores (usamos el año del punto i para el segmento i)
+
 cvals = np.array([year_to_idx[yy] for yy in years_vals[:-1]])
 
-# 5. Graficamos
 fig2, ax2 = plt.subplots(figsize=(12, 5), constrained_layout=True)
 
 cmap = plt.get_cmap("tab10", max(len(unique_years_ts), 1))
@@ -224,12 +205,10 @@ lc.set_alpha(0.95)
 
 ax2.add_collection(lc)
 
-# Ajuste de límites (esencial cuando se usa LineCollection manualmente)
 ax2.set_xlim(x_nums.min(), x_nums.max())
 pad = 0.05 * (y_vals.max() - y_vals.min()) if y_vals.max() != y_vals.min() else 1.0
 ax2.set_ylim(y_vals.min() - pad, y_vals.max() + pad)
 
-# Formato de fecha inteligente en eje X
 locator = mdates.AutoDateLocator()
 formatter = mdates.ConciseDateFormatter(locator)
 ax2.xaxis.set_major_locator(locator)
@@ -238,7 +217,6 @@ ax2.xaxis.set_major_formatter(formatter)
 ax2.set_ylabel(station)
 ax2.grid(True, alpha=0.3)
 
-# Leyenda (simplificada)
 handles = [Line2D([0], [0], color=cmap(i), lw=2.5, label=str(yy))
            for i, yy in enumerate(unique_years_ts)]
 ax2.legend(
