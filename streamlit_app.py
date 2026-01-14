@@ -167,104 +167,79 @@ st.markdown("---")
 unidad = "(msnm)" if station.strip().startswith("Cota") else "(m^3/s)"
 st.subheader(f"{station.strip()} {unidad} - Serie Histórica")
 
-years_sorted = sorted(selected_years)
-segments = []
-segment_years = []
+# 1. Filtramos el DF original directamente (sin pivotear)
+# Usamos las filas que correspondan a los años seleccionados
+mask_years = df["year"].isin(selected_years)
+df_ts = df[mask_years].copy()
 
-# Preparamos listas para límites de ejes
-all_dates_num = []
-all_values = []
-
-for y in years_sorted:
-    if y not in pivot.columns:
-        continue
-    
-    # Obtenemos los datos del año 'y' y eliminamos nulos
-    data_y = pivot[y].dropna()
-    
-    if data_y.empty:
-        continue
-
-    # --- CORRECCIÓN AQUÍ ---
-    # Forzamos que el índice (día del año) sea entero. 
-    # Si estaba como string u objeto, esto soluciona el error de numpy.
-    doy_int = data_y.index.astype(int)
-    
-    # Construcción de fecha: Año * 1000 + DíaDelAño (ej: 2023001)
-    fechas_int = y * 1000 + doy_int
-    fechas_str = fechas_int.astype(str)
-    
-    # Convertimos a datetime
-    fechas_dt = pd.to_datetime(fechas_str, format='%Y%j', errors='coerce')
-    
-    # Convertimos a números de matplotlib
-    x_nums = mdates.date2num(fechas_dt)
-    y_vals = data_y.values
-
-    # Guardamos para calcular límites globales
-    all_dates_num.extend(x_nums)
-    all_values.extend(y_vals)
-
-    # Creamos segmentos "punto a punto"
-    points = np.column_stack([x_nums, y_vals])
-    
-    if len(points) > 1:
-        # Array de segmentos
-        seg = np.stack((points[:-1], points[1:]), axis=1)
-        segments.append(seg)
-        segment_years.extend([y] * len(seg))
-
-if not segments:
-    st.info("No hay datos suficientes para graficar la serie continua.")
+# 2. Creamos la columna fecha directamente usando las columnas existentes
+# Pandas es muy inteligente: si le pasas un DF con cols 'year', 'month', 'day', crea la fecha.
+try:
+    df_ts["fecha"] = pd.to_datetime(df_ts[["year", "month", "day"]])
+except Exception as e:
+    st.error(f"Error creando fechas: {e}. Verifica que las columnas year/month/day sean numéricas.")
     st.stop()
 
-# Concatenamos todos los segmentos
-all_segments = np.concatenate(segments)
+# 3. Ordenamos por fecha y eliminamos nulos en la variable de interés
+df_ts = df_ts.sort_values("fecha")
+df_ts = df_ts.dropna(subset=[station])
 
-# Configuración de Colores
-unique_years = sorted(list(set(segment_years)))
-year_to_idx = {yy: i for i, yy in enumerate(unique_years)}
-cvals = np.array([year_to_idx[yy] for yy in segment_years])
+if df_ts.empty:
+    st.info("No hay datos para graficar en los años seleccionados.")
+    st.stop()
 
-cmap = plt.get_cmap("tab10", max(len(unique_years), 1))
+# 4. Preparamos datos para LineCollection (para mantener los colores por año)
+# Convertimos fechas a números de matplotlib
+x_nums = mdates.date2num(df_ts["fecha"])
+y_vals = df_ts[station].values
+years_vals = df_ts["year"].values
 
-lc = LineCollection(all_segments, cmap=cmap)
+# Creamos los puntos (x, y)
+points = np.column_stack([x_nums, y_vals])
+
+# Creamos los segmentos conectando i con i+1
+segments = np.stack((points[:-1], points[1:]), axis=1)
+
+# El color de cada segmento corresponde al año del punto inicial
+# Mapeamos los años a índices de color
+unique_years_ts = sorted(df_ts["year"].unique())
+year_to_idx = {yy: i for i, yy in enumerate(unique_years_ts)}
+# array de colores (usamos el año del punto i para el segmento i)
+cvals = np.array([year_to_idx[yy] for yy in years_vals[:-1]])
+
+# 5. Graficamos
+fig2, ax2 = plt.subplots(figsize=(12, 5), constrained_layout=True)
+
+cmap = plt.get_cmap("tab10", max(len(unique_years_ts), 1))
+lc = LineCollection(segments, cmap=cmap)
 lc.set_array(cvals)
 lc.set_linewidth(1.5)
 lc.set_alpha(0.95)
 
-fig2, ax2 = plt.subplots(figsize=(12, 5), constrained_layout=True)
 ax2.add_collection(lc)
 
-# --- AJUSTE DE LÍMITES ---
-if all_dates_num:
-    ax2.set_xlim(min(all_dates_num), max(all_dates_num))
-    
-    min_y, max_y = min(all_values), max(all_values)
-    # Evitar error si min == max
-    pad = 0.05 * (max_y - min_y) if max_y != min_y else 1.0
-    ax2.set_ylim(min_y - pad, max_y + pad)
+# Ajuste de límites (esencial cuando se usa LineCollection manualmente)
+ax2.set_xlim(x_nums.min(), x_nums.max())
+pad = 0.05 * (y_vals.max() - y_vals.min()) if y_vals.max() != y_vals.min() else 1.0
+ax2.set_ylim(y_vals.min() - pad, y_vals.max() + pad)
 
-# --- FORMATO DE FECHA (AÑOS) ---
-if len(unique_years) > 2:
-    ax2.xaxis.set_major_locator(mdates.YearLocator())
-    ax2.xaxis.set_major_formatter(mdates.DateFormatter('%Y'))
-else:
-    # Si son pocos años, mostramos Mes-Año
-    ax2.xaxis.set_major_locator(mdates.MonthLocator(interval=3))
-    ax2.xaxis.set_major_formatter(mdates.DateFormatter('%b-%Y'))
+# Formato de fecha inteligente en eje X
+locator = mdates.AutoDateLocator()
+formatter = mdates.ConciseDateFormatter(locator)
+ax2.xaxis.set_major_locator(locator)
+ax2.xaxis.set_major_formatter(formatter)
 
 ax2.set_ylabel(station)
 ax2.grid(True, alpha=0.3)
 
-# Leyenda
+# Leyenda (simplificada)
 handles = [Line2D([0], [0], color=cmap(i), lw=2.5, label=str(yy))
-           for i, yy in enumerate(unique_years)]
+           for i, yy in enumerate(unique_years_ts)]
 ax2.legend(
     handles=handles,
     loc="upper left",
     bbox_to_anchor=(0, 1.02),
-    ncols=min(10, max(1, len(unique_years))),
+    ncols=min(10, max(1, len(unique_years_ts))),
     frameon=False
 )
 
