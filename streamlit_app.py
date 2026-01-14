@@ -4,6 +4,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.collections import LineCollection
 from matplotlib.lines import Line2D
+import matplotlib.dates as mdates
+from matplotlib.dates import ConciseDateFormatter
 
 st.set_page_config(page_title="Hidrología EC", layout="wide")
 
