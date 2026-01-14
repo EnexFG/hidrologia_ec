@@ -99,15 +99,12 @@ pivot_month = (
 )
 
 fig2, ax2 = plt.subplots(figsize=(10, 5))
-x = range(1, 13)
 for y in selected_years:
-    if y in pivot_month.columns:
-        ax2.plot(x, pivot_month[y].values, label=str(y))
+    if y in pivot.columns:
+        ax2.plot(pivot.index, pivot[y], label=str(y))
 
-ax2.set_xticks(list(x))
-ax2.set_xticklabels(month_labels, rotation=0)
-ax2.set_xlabel("Mes")
-ax2.set_ylabel(f"{station} (promedio mensual)")
+ax2.set_xlabel("Día del año (ordenado por mes/día)")
+ax2.set_ylabel(station)
 ax2.legend()
 ax2.grid(True)
 st.pyplot(fig2)
