@@ -127,6 +127,42 @@ ax1.set_xticks(month_start_positions)
 ax1.set_xticklabels(month_start_labels)
 ax1.legend()
 ax1.grid(True)
+
+# --- Eje X estilo Excel: días (ticks) + meses (segunda fila) ---
+
+# xpos ya es np.arange(len(pivot.index))
+# x_month y x_day ya los tienes como listas (strings '01'..'12' y '01'..'31')
+
+# 1) Ticks de DÍAS (elige pocos para no abombar)
+dias_mostrar = {1, 8, 15, 22}  # puedes ajustar: {1, 11, 21} etc.
+day_tick_pos = [i for i, d in enumerate(x_day) if int(d) in dias_mostrar]
+day_tick_lab = [str(int(x_day[i])) for i in day_tick_pos]
+
+ax1.set_xticks(day_tick_pos)
+ax1.set_xticklabels(day_tick_lab)
+ax1.tick_params(axis="x", pad=2)  # acerca los días al eje
+
+# 2) Segundo eje X ABAJO para los MESES (tipo Excel)
+secax = ax1.secondary_xaxis('bottom')
+secax.spines['bottom'].set_position(('outward', 22))  # baja la “fila” de meses
+
+# Posición de inicio de cada mes (primer punto donde aparece el mes)
+month_start_pos = []
+month_labels = []
+seen = set()
+for i, m in enumerate(x_month):
+    if m not in seen:
+        seen.add(m)
+        month_start_pos.append(i)
+        month_labels.append(meses_abrev[m])  # 'Ene', 'Feb', ...
+
+secax.set_xticks(month_start_pos)
+secax.set_xticklabels(month_labels)
+
+# Limpieza visual
+ax1.set_xlabel("")      # el eje principal ya muestra días
+secax.set_xlabel("")    # sin título para que parezca Excel
+
 st.pyplot(fig1)
 
 st.markdown("---")
