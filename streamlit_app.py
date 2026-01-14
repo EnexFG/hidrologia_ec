@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 from matplotlib.collections import LineCollection
 from matplotlib.lines import Line2D
 import matplotlib.dates as mdates
+import os
 
 # ===== Estilo visual (no requiere seaborn instalado) =====
 plt.style.use("seaborn-v0_8-whitegrid")
@@ -18,7 +19,7 @@ meses_abrev = {
 }
 
 @st.cache_data
-def load_data(path: str) -> pd.DataFrame:
+def load_data(path: str, mtime: float) -> pd.DataFrame:
     return pd.read_pickle(path)
 
 st.title("Niveles y caudales — Fuente: CELEC")
@@ -26,7 +27,8 @@ st.title("Niveles y caudales — Fuente: CELEC")
 DATA_PATH = "data_caudales_diario.pickle"
 
 try:
-    df = load_data(DATA_PATH)
+    mtime = os.path.getmtime(DATA_PATH)
+    df = load_data(DATA_PATH, mtime)
 except Exception as e:
     st.error(f"No se pudo cargar el pickle '{DATA_PATH}': {e}")
     st.stop()
