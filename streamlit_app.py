@@ -182,7 +182,7 @@ except Exception as e:
 
 # 3. Ordenamos por fecha y eliminamos nulos en la variable de interés
 df_ts = df_ts.sort_values("fecha")
-df_ts = df_ts.dropna(subset=[station])
+df_ts = df_ts.dropna(subset=[station]).replace(0, pd.NA)
 
 if df_ts.empty:
     st.info("No hay datos para graficar en los años seleccionados.")
