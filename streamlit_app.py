@@ -172,64 +172,76 @@ st.markdown("---")
 # ------------------------
 st.subheader("Gráfico 2 — Serie continua (una sola línea, colores por año)")
 
-# Construimos x,y concatenando años seleccionados en orden
-years_sorted = sorted(selected_years)
-ys = []
-year_of_point = []
+df_ts = df_plot.copy()
 
-for y in years_sorted:
-    if y not in pivot.columns:
-        continue
-    arr = pivot[y].to_numpy(dtype=float)
-    # Mantén longitud fija (365/366 según tus datos). Si hay NaN, quedarán huecos.
-    ys.append(arr)
-    year_of_point.extend([y] * len(arr))
+# Construir fecha real
+df_ts["date"] = pd.to_datetime(
+    df_ts["year"].astype(int).astype(str) + "-" +
+    df_ts["month"].astype(str).str.zfill(2) + "-" +
+    df_ts["day"].astype(str).str.zfill(2),
+    errors="coerce"
+)
 
-if not ys:
-    st.info("No hay datos para graficar en los años seleccionados.")
-    st.stop()
+df_ts = df_ts.dropna(subset=["date"]).sort_values("date")
 
-y_concat = np.concatenate(ys)
-x_concat = np.arange(len(y_concat))
+# Serie completa (una sola)
+x_dates = df_ts["date"].to_numpy()
+y_vals = df_ts[station].to_numpy(dtype=float)
+year_vals = df_ts["year"].to_numpy()
 
-# Para la línea multicolor: creamos segmentos entre puntos consecutivos
-# Nota: si hay NaNs, evitamos segmentos que toquen NaN.
-valid = np.isfinite(y_concat)
-points = np.column_stack([x_concat, y_concat])
+# Convertir fechas a formato numérico (matplotlib)
+x_num = mdates.date2num(x_dates)
+
+# Segmentar en tramos consecutivos (evitar NaN y saltos grandes de fecha)
+valid = np.isfinite(y_vals)
 
 segments = []
 segment_years = []
-for i in range(len(points) - 1):
-    if valid[i] and valid[i + 1]:
-        segments.append([points[i], points[i + 1]])
-        segment_years.append(year_of_point[i])
+
+for i in range(len(x_num) - 1):
+    if not (valid[i] and valid[i+1]):
+        continue
+
+    # Si hay saltos grandes (por huecos), corta la línea (opcional pero recomendado)
+    # Por ejemplo: si falta data y se brinca > 7 días, no unimos esos puntos.
+    if (x_num[i+1] - x_num[i]) > 7:
+        continue
+
+    segments.append([[x_num[i], y_vals[i]], [x_num[i+1], y_vals[i+1]]])
+    segment_years.append(year_vals[i])
 
 segments = np.asarray(segments, dtype=float)
-unique_years = years_sorted
+
+unique_years = sorted(set(segment_years))
 year_to_idx = {yy: i for i, yy in enumerate(unique_years)}
 cvals = np.array([year_to_idx[yy] for yy in segment_years], dtype=float)
 
-# Colormap discreto
 cmap = plt.get_cmap("tab10", max(len(unique_years), 1))
-
 lc = LineCollection(segments, cmap=cmap)
 lc.set_array(cvals)
 lc.set_linewidth(2.0)
 
 fig2, ax2 = plt.subplots(figsize=(11, 5))
 ax2.add_collection(lc)
-ax2.set_xlim(x_concat.min(), x_concat.max())
-# y-limits automáticos razonables
-finite_y = y_concat[np.isfinite(y_concat)]
+
+ax2.set_xlim(x_num.min(), x_num.max())
+
+finite_y = y_vals[np.isfinite(y_vals)]
 if finite_y.size > 0:
     pad = 0.05 * (finite_y.max() - finite_y.min() + 1e-9)
     ax2.set_ylim(finite_y.min() - pad, finite_y.max() + pad)
 
-ax2.set_xlabel("Tiempo (años concatenados)")
+ax2.set_xlabel("Día (fecha)")
 ax2.set_ylabel(station)
 ax2.grid(True)
 
-# Leyenda: proxies por año
+# Formato bonito de fechas (auto)
+locator = mdates.AutoDateLocator()
+ax2.xaxis.set_major_locator(locator)
+ax2.xaxis.set_major_formatter(ConciseDateFormatter(locator))
+
+# Leyenda por año
 handles = [Line2D([0], [0], color=cmap(i), lw=2, label=str(yy)) for i, yy in enumerate(unique_years)]
 ax2.legend(handles=handles, title="Año")
+
 st.pyplot(fig2)
