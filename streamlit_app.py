@@ -179,46 +179,46 @@ for y in years_sorted:
     if y not in pivot.columns:
         continue
     
-    # Obtenemos los datos del año 'y'
-    # pivot.index es el día del año (doy) -> 1, 2, ... 365
+    # Obtenemos los datos del año 'y' y eliminamos nulos
     data_y = pivot[y].dropna()
     
     if data_y.empty:
         continue
 
-    # 1. Crear fechas reales para este año
-    # Convertimos el "Año + Día del año" a objeto datetime
-    # Truco vectorial rápido: Año * 1000 + doy (ej: 2023001)
-    fechas_str = (y * 1000 + data_y.index).astype(str)
+    # --- CORRECCIÓN AQUÍ ---
+    # Forzamos que el índice (día del año) sea entero. 
+    # Si estaba como string u objeto, esto soluciona el error de numpy.
+    doy_int = data_y.index.astype(int)
+    
+    # Construcción de fecha: Año * 1000 + DíaDelAño (ej: 2023001)
+    fechas_int = y * 1000 + doy_int
+    fechas_str = fechas_int.astype(str)
+    
+    # Convertimos a datetime
     fechas_dt = pd.to_datetime(fechas_str, format='%Y%j', errors='coerce')
     
-    # 2. Convertir a números de matplotlib (necesario para LineCollection)
+    # Convertimos a números de matplotlib
     x_nums = mdates.date2num(fechas_dt)
     y_vals = data_y.values
 
-    # Guardamos para calcular límites globales luego
+    # Guardamos para calcular límites globales
     all_dates_num.extend(x_nums)
     all_values.extend(y_vals)
 
-    # 3. Crear segmentos "punto a punto" para que LineCollection pueda colorearlos
-    # (Unimos cada punto i con i+1)
+    # Creamos segmentos "punto a punto"
     points = np.column_stack([x_nums, y_vals])
     
-    # Creamos los segmentos [ (x1,y1), (x2,y2) ], [ (x2,y2), (x3,y3) ] ...
-    # Esto permite que la línea cambie de color, pero visualmente es continua
     if len(points) > 1:
-        # Array de segmentos: (N-1, 2, 2)
-        # Segmento i va de points[i] a points[i+1]
+        # Array de segmentos
         seg = np.stack((points[:-1], points[1:]), axis=1)
         segments.append(seg)
-        # Asignamos el año a cada segmento de este grupo
         segment_years.extend([y] * len(seg))
 
 if not segments:
     st.info("No hay datos suficientes para graficar la serie continua.")
     st.stop()
 
-# Concatenamos todos los segmentos de todos los años
+# Concatenamos todos los segmentos
 all_segments = np.concatenate(segments)
 
 # Configuración de Colores
@@ -236,19 +236,16 @@ lc.set_alpha(0.95)
 fig2, ax2 = plt.subplots(figsize=(12, 5), constrained_layout=True)
 ax2.add_collection(lc)
 
-# --- AJUSTE DEL EJE X (FECHAS) ---
-# Forzamos los límites con los datos acumulados
+# --- AJUSTE DE LÍMITES ---
 if all_dates_num:
     ax2.set_xlim(min(all_dates_num), max(all_dates_num))
     
-    # Limites Y con un pequeño margen
     min_y, max_y = min(all_values), max(all_values)
+    # Evitar error si min == max
     pad = 0.05 * (max_y - min_y) if max_y != min_y else 1.0
     ax2.set_ylim(min_y - pad, max_y + pad)
 
-# AQUÍ ESTÁ LA CLAVE: Forzamos formato de fecha simple
-# %Y = 2023, %b = Ene/Feb...
-# Si hay muchos años, mejor solo mostrar el Año
+# --- FORMATO DE FECHA (AÑOS) ---
 if len(unique_years) > 2:
     ax2.xaxis.set_major_locator(mdates.YearLocator())
     ax2.xaxis.set_major_formatter(mdates.DateFormatter('%Y'))
