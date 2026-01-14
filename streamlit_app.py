@@ -46,17 +46,21 @@ default_index = value_cols.index(default_station) if default_station in value_co
 station = st.selectbox("Cota/Caudal:", value_cols, index=default_index)
 
 years = sorted(df["year"].dropna().unique())
+years_options = years + ["PROM 2020–2022"]
 
 N = 3
 default_years = years[-N:] if len(years) >= N else years
 
-selected_years = st.multiselect("Años a mostrar:", years, default=default_years)
+
+selected_years = st.multiselect("Años a mostrar:", years_options, default=default_years)
 
 if not selected_years:
     st.info("Selecciona al menos un año.")
     st.stop()
 
-df_plot = df[df["year"].isin(selected_years)][["year", "month", "day", station]].copy()
+selected_years_numeric = [y for y in selected_years if isinstance(y, (int, np.integer))]
+df_plot = df[df["year"].isin(selected_years_numeric)][["year", "month", "day", station]].copy()
+#df_plot = df[df["year"].isin(selected_years)][["year", "month", "day", station]].copy()
 df_plot[station] = df_plot[station].replace(0, pd.NA)
 
 df_plot["month"] = df_plot["month"].astype(int).astype(str).str.zfill(2)
@@ -71,7 +75,11 @@ df_plot["doy"] = df_plot["date_dummy"].dt.dayofyear
 
 pivot = df_plot.pivot_table(index="doy", columns="year", values=station).sort_index()
 
-
+if "PROM 2020–2022" in selected_years:
+    baseline_cols = [y for y in [2020, 2021, 2022] if y in pivot.columns]
+    if baseline_cols:
+        pivot["PROM 2020–2022"] = pivot[baseline_cols].mean(axis=1)
+        
 doy_to_md = (
     df_plot.dropna(subset=["doy"])
            .drop_duplicates(subset=["doy"])
