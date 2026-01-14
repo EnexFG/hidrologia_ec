@@ -102,7 +102,8 @@ x_labels_monthday = [f"{meses_abrev[m]}-{d}" for m, d in zip(x_month, x_day)]
 # ------------------------
 # GRÁFICO 1
 # ------------------------
-st.subheader("Gráfico 1 — Comparación interanual (cada línea = un año)")
+unidad = "(msnm)" if station.strip().startswith("Cota") else "(m^3/s)"
+st.subheader(f"{station.strip()} {unidad}")
 
 fig1, ax1 = plt.subplots(figsize=(12, 5), constrained_layout=True)
 xpos = np.arange(len(pivot.index))
