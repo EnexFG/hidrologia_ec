@@ -1,16 +1,12 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.collections import LineCollection
+from matplotlib.lines import Line2D
 
 st.set_page_config(page_title="Hidrología EC", layout="wide")
 
-meses_map = {
-    '01': 'Enero', '02': 'Febrero', '03': 'Marzo', '04': 'Abril',
-    '05': 'Mayo', '06': 'Junio', '07': 'Julio', '08': 'Agosto',
-    '09': 'Septiembre', '10': 'Octubre', '11': 'Noviembre', '12': 'Diciembre'
-}
-
-# (abreviaciones para el eje X sin abombar)
 meses_abrev = {
     '01': 'Ene', '02': 'Feb', '03': 'Mar', '04': 'Abr',
     '05': 'May', '06': 'Jun', '07': 'Jul', '08': 'Ago',
@@ -23,7 +19,6 @@ def load_data(path: str) -> pd.DataFrame:
 
 st.title("Explorador de caudales — Cotas por estación y año")
 
-# Carga fija: NO mostramos el nombre del archivo en la UI
 DATA_PATH = "data_caudales_diario.pickle"
 
 try:
@@ -53,52 +48,152 @@ if not selected_years:
     st.info("Selecciona al menos un año.")
     st.stop()
 
-# Filtrar y preparar para graficar
+# Preparación base
 df_plot = df[df["year"].isin(selected_years)][["year", "month", "day", station]].copy()
-
-# Reemplazar ceros por NaN
 df_plot[station] = df_plot[station].replace(0, pd.NA)
 
-# Crear doy (día del año)
-md = df_plot["month"].astype(str).str.zfill(2) + "-" + df_plot["day"].astype(str).str.zfill(2)
+# Normalizar month/day a string con cero a la izquierda
+df_plot["month"] = df_plot["month"].astype(int).astype(str).str.zfill(2)
+df_plot["day"] = df_plot["day"].astype(int).astype(str).str.zfill(2)
+
+# MultiIndex para el eje X: (mes_abrev, dia)
+df_plot["month_name"] = df_plot["month"].map(meses_abrev)
+df_plot["day_int"] = df_plot["day"].astype(int)
+
+# Orden natural por mes/día usando un "doy" auxiliar (año no bisiesto)
+md = df_plot["month"] + "-" + df_plot["day"]
 df_plot["date_dummy"] = pd.to_datetime(md, format="%m-%d", errors="coerce")
 df_plot["doy"] = df_plot["date_dummy"].dt.dayofyear
 
+# Pivot por doy (para graficar fácil y consistente)
 pivot = df_plot.pivot_table(index="doy", columns="year", values=station).sort_index()
 
-# ============
-# GRÁFICO 1: igual al que te gusta, pero eje X con MESES (12 ticks)
-# ============
-# Usamos un año no-bisiesto para calcular el doy del inicio de cada mes
-month_starts = pd.date_range("2001-01-01", "2001-12-01", freq="MS")
-month_start_doys = month_starts.dayofyear.tolist()
-month_labels = [meses_abrev[f"{m:02d}"] for m in range(1, 13)]
+# También construimos el MultiIndex (mes,día) para el eje X “semántico”
+# (mapeando doy -> (mes_abrev, dia))
+doy_to_md = (
+    df_plot.dropna(subset=["doy"])
+           .drop_duplicates(subset=["doy"])
+           .set_index("doy")[["month", "day"]]
+           .sort_index()
+)
 
-fig1, ax1 = plt.subplots(figsize=(10, 5))
+# Aseguramos cobertura para los doy del pivot
+doy_index = pivot.index.astype(int)
+md_for_doy = doy_to_md.reindex(doy_index)
+
+# Si faltan algunos, hacemos fallback con fecha dummy desde doy (año 2001)
+missing = md_for_doy["month"].isna()
+if missing.any():
+    fallback_dates = pd.to_datetime(doy_index[missing].astype(str), format="%j", errors="coerce") + pd.DateOffset(years=2001-1900)
+    # el fallback puede fallar dependiendo de pandas; por eso hacemos algo más robusto:
+    # usamos un rango base y indexamos por doy
+    base = pd.date_range("2001-01-01", "2001-12-31", freq="D")
+    base_map = pd.DataFrame({
+        "doy": base.dayofyear,
+        "month": base.month.astype(int).astype(str).str.zfill(2),
+        "day": base.day.astype(int).astype(str).str.zfill(2)
+    }).set_index("doy")
+    md_for_doy.loc[missing, ["month", "day"]] = base_map.reindex(doy_index[missing])[["month", "day"]].values
+
+x_month = md_for_doy["month"].astype(str).str.zfill(2).tolist()
+x_day = md_for_doy["day"].astype(str).str.zfill(2).tolist()
+x_labels_monthday = [f"{meses_abrev[m]}-{d}" for m, d in zip(x_month, x_day)]
+
+# Ticks: solo inicio de cada mes para no abombar el eje
+month_start_positions = []
+month_start_labels = []
+seen = set()
+for i, (m, d) in enumerate(zip(x_month, x_day)):
+    if m not in seen:  # primer día que aparece ese mes en el eje
+        seen.add(m)
+        month_start_positions.append(i)
+        month_start_labels.append(f"{meses_abrev[m]}-{d}")
+
+# ------------------------
+# GRÁFICO 1
+# ------------------------
+st.subheader("Gráfico 1 — Comparación interanual (cada línea = un año)")
+
+fig1, ax1 = plt.subplots(figsize=(11, 5))
+xpos = np.arange(len(pivot.index))
+
 for y in selected_years:
     if y in pivot.columns:
-        ax1.plot(pivot.index, pivot[y], label=str(y))
+        ax1.plot(xpos, pivot[y].values, label=str(y))
 
-ax1.set_xlabel("Mes")
+ax1.set_xlabel("Mes–día")
 ax1.set_ylabel(station)
-ax1.set_xticks(month_start_doys)
-ax1.set_xticklabels(month_labels)
+ax1.set_xticks(month_start_positions)
+ax1.set_xticklabels(month_start_labels)
 ax1.legend()
 ax1.grid(True)
 st.pyplot(fig1)
 
 st.markdown("---")
 
-# ============
-# GRÁFICO 2: el gráfico de la versión anterior (doy “normal”, sin meses)
-# ============
-fig2, ax2 = plt.subplots(figsize=(10, 5))
-for y in selected_years:
-    if y in pivot.columns:
-        ax2.plot(pivot.index, pivot[y], label=str(y))
+# ------------------------
+# GRÁFICO 2 (una sola línea continua, segmentos por año con colores distintos)
+# ------------------------
+st.subheader("Gráfico 2 — Serie continua (una sola línea, colores por año)")
 
-ax2.set_xlabel("Día del año (ordenado por mes/día)")
+# Construimos x,y concatenando años seleccionados en orden
+years_sorted = sorted(selected_years)
+ys = []
+year_of_point = []
+
+for y in years_sorted:
+    if y not in pivot.columns:
+        continue
+    arr = pivot[y].to_numpy(dtype=float)
+    # Mantén longitud fija (365/366 según tus datos). Si hay NaN, quedarán huecos.
+    ys.append(arr)
+    year_of_point.extend([y] * len(arr))
+
+if not ys:
+    st.info("No hay datos para graficar en los años seleccionados.")
+    st.stop()
+
+y_concat = np.concatenate(ys)
+x_concat = np.arange(len(y_concat))
+
+# Para la línea multicolor: creamos segmentos entre puntos consecutivos
+# Nota: si hay NaNs, evitamos segmentos que toquen NaN.
+valid = np.isfinite(y_concat)
+points = np.column_stack([x_concat, y_concat])
+
+segments = []
+segment_years = []
+for i in range(len(points) - 1):
+    if valid[i] and valid[i + 1]:
+        segments.append([points[i], points[i + 1]])
+        segment_years.append(year_of_point[i])
+
+segments = np.asarray(segments, dtype=float)
+unique_years = years_sorted
+year_to_idx = {yy: i for i, yy in enumerate(unique_years)}
+cvals = np.array([year_to_idx[yy] for yy in segment_years], dtype=float)
+
+# Colormap discreto
+cmap = plt.get_cmap("tab10", max(len(unique_years), 1))
+
+lc = LineCollection(segments, cmap=cmap)
+lc.set_array(cvals)
+lc.set_linewidth(2.0)
+
+fig2, ax2 = plt.subplots(figsize=(11, 5))
+ax2.add_collection(lc)
+ax2.set_xlim(x_concat.min(), x_concat.max())
+# y-limits automáticos razonables
+finite_y = y_concat[np.isfinite(y_concat)]
+if finite_y.size > 0:
+    pad = 0.05 * (finite_y.max() - finite_y.min() + 1e-9)
+    ax2.set_ylim(finite_y.min() - pad, finite_y.max() + pad)
+
+ax2.set_xlabel("Tiempo (años concatenados)")
 ax2.set_ylabel(station)
-ax2.legend()
 ax2.grid(True)
+
+# Leyenda: proxies por año
+handles = [Line2D([0], [0], color=cmap(i), lw=2, label=str(yy)) for i, yy in enumerate(unique_years)]
+ax2.legend(handles=handles, title="Año")
 st.pyplot(fig2)
