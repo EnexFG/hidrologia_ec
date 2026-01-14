@@ -47,11 +47,11 @@ default_index = value_cols.index(default_station) if default_station in value_co
 station = st.selectbox("Estación (columna de valores)", value_cols, index=default_index)
 
 years = sorted(df["year"].dropna().unique())
-selected_years = st.multiselect(
-    "Años a mostrar",
-    years,
-    default=years[-5:] if len(years) > 5 else years
-)
+
+N = 3
+default_years = years[-N:] if len(years) >= N else years
+
+selected_years = st.multiselect("Años a mostrar", years, default=default_years)
 
 if not selected_years:
     st.info("Selecciona al menos un año.")
