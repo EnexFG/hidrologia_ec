@@ -44,7 +44,7 @@ if not value_cols:
 default_station = "CotaMaz"  # <- pon aquí el nombre exacto de tu columna preferida
 
 default_index = value_cols.index(default_station) if default_station in value_cols else 0
-station = st.selectbox("Estación (columna de valores)", value_cols, index=default_index)
+station = st.selectbox("Estación", value_cols, index=default_index)
 
 years = sorted(df["year"].dropna().unique())
 
