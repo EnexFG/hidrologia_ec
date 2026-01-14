@@ -21,7 +21,7 @@ meses_abrev = {
 def load_data(path: str) -> pd.DataFrame:
     return pd.read_pickle(path)
 
-st.title("Explorador de caudales — Cotas por estación y año")
+st.title("Niveles y caudales — Fuente: CELEC")
 
 DATA_PATH = "data_caudales_diario.pickle"
 
