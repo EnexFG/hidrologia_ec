@@ -18,18 +18,49 @@ meses_abrev = {
 def load_data(path: str) -> pd.DataFrame:
     return pd.read_pickle(path)
 
+def ensure_flat_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Evita ambigüedad label/level: si year/month/day vienen como índice o MultiIndex,
+    los baja a columnas sin duplicar nombres.
+    """
+    idx_names = list(df.index.names) if isinstance(df.index, pd.MultiIndex) else [df.index.name]
+    idx_names = [n for n in idx_names if n is not None]
+
+    needs_reset = False
+    if isinstance(df.index, pd.MultiIndex):
+        needs_reset = True
+    elif df.index.name in {"year", "month", "day", "date"}:
+        needs_reset = True
+    elif any(n in {"year", "month", "day", "date"} for n in idx_names):
+        needs_reset = True
+
+    if needs_reset:
+        df = df.reset_index()
+
+    # Si por cualquier razón quedaron columnas duplicadas, las compactamos
+    # (nos quedamos con la primera ocurrencia)
+    df = df.loc[:, ~df.columns.duplicated()].copy()
+    return df
+
 st.title("Explorador de caudales — Cotas por estación y año")
 
 DATA_PATH = "data_caudales_diario.pickle"
 
 try:
     df = load_data(DATA_PATH)
+    df = ensure_flat_columns(df)
 except Exception as e:
     st.error(f"No se pudo cargar el pickle '{DATA_PATH}': {e}")
     st.stop()
 
 # Columnas esperadas
 cols = list(df.columns)
+required = {"year", "month", "day"}
+if not required.issubset(set(cols)):
+    st.error("No encuentro columnas year/month/day en el dataset (puede venir con otro esquema).")
+    st.write("Columnas detectadas:", cols)
+    st.stop()
+
 value_cols = [c for c in cols if c not in ("year", "month", "day")]
 if not value_cols:
     st.error("No se encontraron columnas de valores (esperadas aparte de year, month, day).")
@@ -38,7 +69,7 @@ if not value_cols:
 
 station = st.selectbox("Estación (columna de valores)", value_cols)
 
-years = sorted(df["year"].dropna().unique())
+years = sorted(pd.Series(df["year"]).dropna().unique())
 selected_years = st.multiselect(
     "Años a mostrar",
     years,
@@ -53,12 +84,14 @@ if not selected_years:
 # Preparación base
 # =========================
 df_plot = df[df["year"].isin(selected_years)][["year", "month", "day", station]].copy()
+
+# Reemplazar ceros por NaN
 df_plot[station] = df_plot[station].replace(0, pd.NA)
 
-# Normalizar month/day
-df_plot["year"] = df_plot["year"].astype(int)
-df_plot["month"] = df_plot["month"].astype(int)
-df_plot["day"] = df_plot["day"].astype(int)
+# Normalizar tipos
+df_plot["year"] = pd.to_numeric(df_plot["year"], errors="coerce").astype("Int64")
+df_plot["month"] = pd.to_numeric(df_plot["month"], errors="coerce").astype("Int64")
+df_plot["day"] = pd.to_numeric(df_plot["day"], errors="coerce").astype("Int64")
 
 # Fecha real para Gráfico 2
 df_plot["date"] = pd.to_datetime(
@@ -66,13 +99,13 @@ df_plot["date"] = pd.to_datetime(
     errors="coerce"
 )
 
-# doy auxiliar para Gráfico 1 (comparación interanual por mes/día)
+# doy auxiliar para Gráfico 1
 df_plot["doy"] = df_plot["date"].dt.dayofyear
 
-# Pivot por doy: cada columna un año
+# Pivot por doy (cada columna un año)
 pivot = df_plot.pivot_table(index="doy", columns="year", values=station).sort_index()
 
-# Mapeo doy -> (mes, día) usando un año base (bisiesto si hace falta)
+# Mapa doy -> (mes, día) con año base (para etiquetas del eje)
 max_doy = int(pivot.index.max()) if len(pivot.index) else 365
 base_year = 2000 if max_doy == 366 else 2001
 base = pd.date_range(f"{base_year}-01-01", f"{base_year}-12-31", freq="D")
@@ -89,13 +122,13 @@ x_day = md_for_doy["day"].tolist()
 # =========================
 # GRÁFICO 1
 # Cada línea = un año
-# Eje X tipo Excel: días (ticks) + meses en una segunda fila abajo
+# Eje X estilo Excel: días + meses debajo
 # =========================
 st.subheader("Gráfico 1 — Cada línea es un año (eje X: mes + días)")
 
 xpos = np.arange(len(pivot.index))
-
 fig1, ax1 = plt.subplots(figsize=(11, 5))
+
 for y in sorted(selected_years):
     if y in pivot.columns:
         ax1.plot(xpos, pivot[y].values, label=str(y))
@@ -104,7 +137,7 @@ ax1.set_ylabel(station)
 ax1.grid(True)
 ax1.legend()
 
-# Ticks de DÍAS (para no saturar)
+# Ticks de días (pocos para no saturar)
 dias_mostrar = {1, 8, 15, 22}
 day_tick_pos = [i for i, d in enumerate(x_day) if int(d) in dias_mostrar]
 day_tick_lab = [str(int(x_day[i])) for i in day_tick_pos]
@@ -112,9 +145,9 @@ day_tick_lab = [str(int(x_day[i])) for i in day_tick_pos]
 ax1.set_xticks(day_tick_pos)
 ax1.set_xticklabels(day_tick_lab)
 ax1.tick_params(axis="x", pad=2)
-ax1.set_xlabel("")  # sin título (parecido a Excel)
+ax1.set_xlabel("")
 
-# Segunda fila: MESES
+# Segunda fila: meses abajo
 secax = ax1.secondary_xaxis("bottom")
 secax.spines["bottom"].set_position(("outward", 22))
 
@@ -137,29 +170,28 @@ st.markdown("---")
 
 # =========================
 # GRÁFICO 2
-# Una sola línea continua con colores por año
-# Eje X = FECHA REAL
+# Una sola línea continua multicolor por año
+# Eje X = FECHA real
 # =========================
 st.subheader("Gráfico 2 — Una sola línea continua (eje X: fecha; colores por año)")
 
-# Construir serie diaria por fecha y año (evita duplicados)
+# AQUÍ está el cambio clave: groupby usando Series explícitas (evita ambigüedad)
+tmp = df_plot.dropna(subset=["date"]).copy()
+
 df_ts = (
-    df_plot.dropna(subset=["date"])
-           .groupby(["date", "year"], as_index=False)[station]
-           .mean()
-           .sort_values("date")
+    tmp.groupby([tmp["date"], tmp["year"]], as_index=False)[station]
+       .mean()
+       .rename(columns={"date": "date", "year": "year"})
+       .sort_values("date")
 )
 
-# Para garantizar continuidad "real", armamos un vector completo en orden cronológico
-# (simple: concatenar años seleccionados ordenados; si quieres estrictamente por fecha global, ya está por date)
 years_sorted = sorted(selected_years)
 parts = []
 for y in years_sorted:
     part = df_ts[df_ts["year"] == y][["date", station, "year"]].sort_values("date")
     parts.append(part)
 
-df_concat = pd.concat(parts, ignore_index=True).sort_values("date")
-df_concat = df_concat.reset_index(drop=True)
+df_concat = pd.concat(parts, ignore_index=True).sort_values("date").reset_index(drop=True)
 
 if df_concat.empty:
     st.info("No hay datos para graficar en los años seleccionados.")
@@ -169,24 +201,19 @@ x_dates = df_concat["date"].to_numpy()
 y_vals = df_concat[station].to_numpy(dtype=float)
 y_year = df_concat["year"].to_numpy(dtype=int)
 
-# Convertir fechas a números de Matplotlib
 x_num = mdates.date2num(x_dates)
 
-# Crear segmentos y colorear por año (multicolor en una sola línea)
 valid = np.isfinite(y_vals)
 points = np.column_stack([x_num, y_vals])
 
 segments = []
 segment_years = []
-
 for i in range(len(points) - 1):
     if not (valid[i] and valid[i + 1]):
         continue
-
-    # Romper si hay saltos grandes de fechas (para no unir huecos raros)
+    # Evita unir huecos grandes
     if (x_dates[i + 1] - x_dates[i]) > np.timedelta64(2, "D"):
         continue
-
     segments.append([points[i], points[i + 1]])
     segment_years.append(y_year[i])
 
@@ -213,13 +240,12 @@ if len(segments) > 0:
         pad = 0.05 * (finite_y.max() - finite_y.min() + 1e-9)
         ax2.set_ylim(finite_y.min() - pad, finite_y.max() + pad)
 else:
-    # Fallback si no se pudo crear segmentos (por muchos NaN, etc.)
-    ax2.plot(x_dates, y_vals, linewidth=2.0)
+    ax2.plot(df_concat["date"], y_vals, linewidth=2.0)
 
 ax2.set_ylabel(station)
 ax2.grid(True)
 
-# Formato del eje X como fecha (automático y limpio)
+# Formato de fechas limpio
 locator = mdates.AutoDateLocator(minticks=6, maxticks=10)
 formatter = mdates.ConciseDateFormatter(locator)
 ax2.xaxis.set_major_locator(locator)
