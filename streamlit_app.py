@@ -4,6 +4,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.collections import LineCollection
 from matplotlib.lines import Line2D
+import matplotlib.dates as mdates
 
 # ===== Estilo visual (no requiere seaborn instalado) =====
 plt.style.use("seaborn-v0_8-whitegrid")
@@ -164,17 +165,35 @@ st.markdown("---")
 # GRÁFICO 2 (una sola línea continua, segmentos por año con colores distintos)
 # ------------------------
 unidad = "(msnm)" if station.strip().startswith("Cota") else "(m^3/s)"
-st.subheader(f"{station.strip()} {unidad}")
+st.subheader(f"{station.strip()} {unidad} - Serie Histórica")
 
 years_sorted = sorted(selected_years)
 ys = []
+xs = [] # Lista para guardar las fechas convertidas a números de matplotlib
 year_of_point = []
 
 for y in years_sorted:
     if y not in pivot.columns:
         continue
+    
+    # Extraemos valores
     arr = pivot[y].to_numpy(dtype=float)
+    
+    # Generamos las fechas reales correspondientes al 'doy' (índice del pivot) para este año
+    # pivot.index contiene el día del año (1 a 365/366)
+    # Truco: Convertir "Año" + "DíaDelAño" a datetime
+    # errors='coerce' pondrá NaT si el día 366 no existe en un año no bisiesto
+    dates_in_year = pd.to_datetime(
+        str(y) + pivot.index.astype(str).str.zfill(3), 
+        format='%Y%j', 
+        errors='coerce'
+    )
+    
+    # Convertimos a formato numérico de matplotlib para LineCollection
+    x_nums = mdates.date2num(dates_in_year)
+    
     ys.append(arr)
+    xs.append(x_nums)
     year_of_point.extend([y] * len(arr))
 
 if not ys:
@@ -182,52 +201,73 @@ if not ys:
     st.stop()
 
 y_concat = np.concatenate(ys)
-x_concat = np.arange(len(y_concat))
+x_concat = np.concatenate(xs) # Ahora concatenamos fechas numéricas
 
-valid = np.isfinite(y_concat)
+# Filtramos infinitos y NaT (por si acaso hubo error en fechas bisiestas)
+valid = np.isfinite(y_concat) & np.isfinite(x_concat)
 points = np.column_stack([x_concat, y_concat])
 
 segments = []
 segment_years = []
+
+# Construcción de segmentos
 for i in range(len(points) - 1):
+    # Solo creamos segmento si ambos puntos son válidos
+    # Y opcional: si son consecutivos en el tiempo (para evitar lineas largas en huecos de datos)
+    # Aquí mantenemos tu lógica original de validez:
     if valid[i] and valid[i + 1]:
         segments.append([points[i], points[i + 1]])
         segment_years.append(year_of_point[i])
 
 segments = np.asarray(segments, dtype=float)
+
+# Mapeo de colores por año
 unique_years = years_sorted
 year_to_idx = {yy: i for i, yy in enumerate(unique_years)}
-cvals = np.array([year_to_idx[yy] for yy in segment_years], dtype=float)
+
+if len(segment_years) > 0:
+    cvals = np.array([year_to_idx[yy] for yy in segment_years], dtype=float)
+else:
+    cvals = np.array([])
 
 cmap = plt.get_cmap("tab10", max(len(unique_years), 1))
 
+# Crear la colección de líneas
 lc = LineCollection(segments, cmap=cmap)
 lc.set_array(cvals)
-lc.set_linewidth(2.3)   # más “pro”
+lc.set_linewidth(1.5) 
 lc.set_alpha(0.95)
 
 fig2, ax2 = plt.subplots(figsize=(12, 5), constrained_layout=True)
 ax2.add_collection(lc)
 
-ax2.set_xlim(x_concat.min(), x_concat.max())
-
-finite_y = y_concat[np.isfinite(y_concat)]
-if finite_y.size > 0:
+# Ajuste de límites del eje X e Y
+if len(x_concat[valid]) > 0:
+    ax2.set_xlim(x_concat[valid].min(), x_concat[valid].max())
+    
+    finite_y = y_concat[valid]
     pad = 0.06 * (finite_y.max() - finite_y.min() + 1e-9)
     ax2.set_ylim(finite_y.min() - pad, finite_y.max() + pad)
 
-ax2.set_xlabel("Tiempo (años concatenados)")
+# --- FORMATO DE FECHA EN EJE X ---
+# Formateador automático para que se vea bien según el zoom (Años o Meses)
+locator = mdates.AutoDateLocator()
+formatter = mdates.ConciseDateFormatter(locator)
+
+ax2.xaxis.set_major_locator(locator)
+ax2.xaxis.set_major_formatter(formatter)
+
 ax2.set_ylabel(station)
 ax2.grid(True, alpha=0.3)
 
-# Leyenda por año (fuera)
+# Leyenda
 handles = [Line2D([0], [0], color=cmap(i), lw=2.5, label=str(yy))
            for i, yy in enumerate(unique_years)]
 ax2.legend(
     handles=handles,
     loc="upper left",
     bbox_to_anchor=(0, 1.02),
-    ncols=min(6, max(1, len(unique_years))),
+    ncols=min(12, max(1, len(unique_years))), # Ajustado para que quepan más años horizontalmente
     frameon=False
 )
 
