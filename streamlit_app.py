@@ -168,94 +168,94 @@ unidad = "(msnm)" if station.strip().startswith("Cota") else "(m^3/s)"
 st.subheader(f"{station.strip()} {unidad} - Serie Histórica")
 
 years_sorted = sorted(selected_years)
-ys = []
-xs = [] # Lista para guardar las fechas convertidas a números de matplotlib
-year_of_point = []
+segments = []
+segment_years = []
+
+# Preparamos listas para límites de ejes
+all_dates_num = []
+all_values = []
 
 for y in years_sorted:
     if y not in pivot.columns:
         continue
     
-    # Extraemos valores
-    arr = pivot[y].to_numpy(dtype=float)
+    # Obtenemos los datos del año 'y'
+    # pivot.index es el día del año (doy) -> 1, 2, ... 365
+    data_y = pivot[y].dropna()
     
-    # Generamos las fechas reales correspondientes al 'doy' (índice del pivot) para este año
-    # pivot.index contiene el día del año (1 a 365/366)
-    # Truco: Convertir "Año" + "DíaDelAño" a datetime
-    # errors='coerce' pondrá NaT si el día 366 no existe en un año no bisiesto
-    dates_in_year = pd.to_datetime(
-        str(y) + pivot.index.astype(str).str.zfill(3), 
-        format='%Y%j', 
-        errors='coerce'
-    )
-    
-    # Convertimos a formato numérico de matplotlib para LineCollection
-    x_nums = mdates.date2num(dates_in_year)
-    
-    ys.append(arr)
-    xs.append(x_nums)
-    year_of_point.extend([y] * len(arr))
+    if data_y.empty:
+        continue
 
-if not ys:
-    st.info("No hay datos para graficar en los años seleccionados.")
+    # 1. Crear fechas reales para este año
+    # Convertimos el "Año + Día del año" a objeto datetime
+    # Truco vectorial rápido: Año * 1000 + doy (ej: 2023001)
+    fechas_str = (y * 1000 + data_y.index).astype(str)
+    fechas_dt = pd.to_datetime(fechas_str, format='%Y%j', errors='coerce')
+    
+    # 2. Convertir a números de matplotlib (necesario para LineCollection)
+    x_nums = mdates.date2num(fechas_dt)
+    y_vals = data_y.values
+
+    # Guardamos para calcular límites globales luego
+    all_dates_num.extend(x_nums)
+    all_values.extend(y_vals)
+
+    # 3. Crear segmentos "punto a punto" para que LineCollection pueda colorearlos
+    # (Unimos cada punto i con i+1)
+    points = np.column_stack([x_nums, y_vals])
+    
+    # Creamos los segmentos [ (x1,y1), (x2,y2) ], [ (x2,y2), (x3,y3) ] ...
+    # Esto permite que la línea cambie de color, pero visualmente es continua
+    if len(points) > 1:
+        # Array de segmentos: (N-1, 2, 2)
+        # Segmento i va de points[i] a points[i+1]
+        seg = np.stack((points[:-1], points[1:]), axis=1)
+        segments.append(seg)
+        # Asignamos el año a cada segmento de este grupo
+        segment_years.extend([y] * len(seg))
+
+if not segments:
+    st.info("No hay datos suficientes para graficar la serie continua.")
     st.stop()
 
-y_concat = np.concatenate(ys)
-x_concat = np.concatenate(xs) # Ahora concatenamos fechas numéricas
+# Concatenamos todos los segmentos de todos los años
+all_segments = np.concatenate(segments)
 
-# Filtramos infinitos y NaT (por si acaso hubo error en fechas bisiestas)
-valid = np.isfinite(y_concat) & np.isfinite(x_concat)
-points = np.column_stack([x_concat, y_concat])
-
-segments = []
-segment_years = []
-
-# Construcción de segmentos
-for i in range(len(points) - 1):
-    # Solo creamos segmento si ambos puntos son válidos
-    # Y opcional: si son consecutivos en el tiempo (para evitar lineas largas en huecos de datos)
-    # Aquí mantenemos tu lógica original de validez:
-    if valid[i] and valid[i + 1]:
-        segments.append([points[i], points[i + 1]])
-        segment_years.append(year_of_point[i])
-
-segments = np.asarray(segments, dtype=float)
-
-# Mapeo de colores por año
-unique_years = years_sorted
+# Configuración de Colores
+unique_years = sorted(list(set(segment_years)))
 year_to_idx = {yy: i for i, yy in enumerate(unique_years)}
-
-if len(segment_years) > 0:
-    cvals = np.array([year_to_idx[yy] for yy in segment_years], dtype=float)
-else:
-    cvals = np.array([])
+cvals = np.array([year_to_idx[yy] for yy in segment_years])
 
 cmap = plt.get_cmap("tab10", max(len(unique_years), 1))
 
-# Crear la colección de líneas
-lc = LineCollection(segments, cmap=cmap)
+lc = LineCollection(all_segments, cmap=cmap)
 lc.set_array(cvals)
-lc.set_linewidth(1.5) 
+lc.set_linewidth(1.5)
 lc.set_alpha(0.95)
 
 fig2, ax2 = plt.subplots(figsize=(12, 5), constrained_layout=True)
 ax2.add_collection(lc)
 
-# Ajuste de límites del eje X e Y
-if len(x_concat[valid]) > 0:
-    ax2.set_xlim(x_concat[valid].min(), x_concat[valid].max())
+# --- AJUSTE DEL EJE X (FECHAS) ---
+# Forzamos los límites con los datos acumulados
+if all_dates_num:
+    ax2.set_xlim(min(all_dates_num), max(all_dates_num))
     
-    finite_y = y_concat[valid]
-    pad = 0.06 * (finite_y.max() - finite_y.min() + 1e-9)
-    ax2.set_ylim(finite_y.min() - pad, finite_y.max() + pad)
+    # Limites Y con un pequeño margen
+    min_y, max_y = min(all_values), max(all_values)
+    pad = 0.05 * (max_y - min_y) if max_y != min_y else 1.0
+    ax2.set_ylim(min_y - pad, max_y + pad)
 
-# --- FORMATO DE FECHA EN EJE X ---
-# Formateador automático para que se vea bien según el zoom (Años o Meses)
-locator = mdates.AutoDateLocator()
-formatter = mdates.ConciseDateFormatter(locator)
-
-ax2.xaxis.set_major_locator(locator)
-ax2.xaxis.set_major_formatter(formatter)
+# AQUÍ ESTÁ LA CLAVE: Forzamos formato de fecha simple
+# %Y = 2023, %b = Ene/Feb...
+# Si hay muchos años, mejor solo mostrar el Año
+if len(unique_years) > 2:
+    ax2.xaxis.set_major_locator(mdates.YearLocator())
+    ax2.xaxis.set_major_formatter(mdates.DateFormatter('%Y'))
+else:
+    # Si son pocos años, mostramos Mes-Año
+    ax2.xaxis.set_major_locator(mdates.MonthLocator(interval=3))
+    ax2.xaxis.set_major_formatter(mdates.DateFormatter('%b-%Y'))
 
 ax2.set_ylabel(station)
 ax2.grid(True, alpha=0.3)
@@ -267,7 +267,7 @@ ax2.legend(
     handles=handles,
     loc="upper left",
     bbox_to_anchor=(0, 1.02),
-    ncols=min(12, max(1, len(unique_years))), # Ajustado para que quepan más años horizontalmente
+    ncols=min(10, max(1, len(unique_years))),
     frameon=False
 )
 
