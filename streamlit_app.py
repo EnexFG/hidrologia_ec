@@ -163,7 +163,8 @@ st.markdown("---")
 # ------------------------
 # GRÁFICO 2 (una sola línea continua, segmentos por año con colores distintos)
 # ------------------------
-st.subheader("Gráfico 2 — Serie continua (una sola línea, colores por año)")
+unidad = "(msnm)" if station.strip().startswith("Cota") else "(m^3/s)"
+st.subheader(f"{station.strip()} {unidad}")
 
 years_sorted = sorted(selected_years)
 ys = []
@@ -224,7 +225,6 @@ handles = [Line2D([0], [0], color=cmap(i), lw=2.5, label=str(yy))
            for i, yy in enumerate(unique_years)]
 ax2.legend(
     handles=handles,
-    title="Año",
     loc="upper left",
     bbox_to_anchor=(0, 1.02),
     ncols=min(6, max(1, len(unique_years))),
