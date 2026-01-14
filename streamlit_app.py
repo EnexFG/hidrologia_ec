@@ -134,7 +134,7 @@ ax1.grid(True)
 # x_month y x_day ya los tienes como listas (strings '01'..'12' y '01'..'31')
 
 # 1) Ticks de DÍAS (elige pocos para no abombar)
-dias_mostrar = {1, 8, 15, 22}  # puedes ajustar: {1, 11, 21} etc.
+dias_mostrar = {1, 15, 28}  # puedes ajustar: {1, 11, 21} etc.
 day_tick_pos = [i for i, d in enumerate(x_day) if int(d) in dias_mostrar]
 day_tick_lab = [str(int(x_day[i])) for i in day_tick_pos]
 
