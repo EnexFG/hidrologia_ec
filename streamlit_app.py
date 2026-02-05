@@ -56,6 +56,89 @@ if not selected_years:
     st.info("Selecciona al menos un año.")
     st.stop()
 
+# ------------------------
+# DASHBOARD
+# ------------------------
+st.markdown("---")
+st.subheader("Dashboard — Resumen")
+st.caption(
+    "Supuestos: dashboard genérico por estación seleccionada; KPIs calculados con datos diarios "
+    "de los años elegidos; tendencias agregadas mensualmente; tabla de desglose por mes y año. "
+    "Reemplaza o amplía métricas según necesidad."
+)
+
+df_dash = df[df["year"].isin(selected_years)][["year", "month", "day", station]].copy()
+df_dash[station] = df_dash[station].replace(0, pd.NA)
+
+try:
+    df_dash["fecha"] = pd.to_datetime(df_dash[["year", "month", "day"]])
+except Exception as e:
+    st.error(f"Error creando fechas para dashboard: {e}. Verifica year/month/day.")
+    st.stop()
+
+df_dash = df_dash.dropna(subset=[station]).sort_values("fecha")
+
+if df_dash.empty:
+    st.info("No hay datos disponibles para el dashboard con la selección actual.")
+    st.stop()
+
+unidad = "(msnm)" if station.strip().startswith("Cota") else "(m^3/s)"
+
+latest_row = df_dash.iloc[-1]
+latest_value = latest_row[station]
+latest_date = latest_row["fecha"].date()
+
+window = 7
+last_window = df_dash.tail(window)[station].mean() if len(df_dash) >= window else df_dash[station].mean()
+prev_window = (
+    df_dash.iloc[-(2 * window):-window][station].mean()
+    if len(df_dash) >= 2 * window
+    else np.nan
+)
+delta_window = last_window - prev_window if pd.notna(prev_window) else np.nan
+
+min_value = df_dash[station].min()
+max_value = df_dash[station].max()
+mean_value = df_dash[station].mean()
+
+kpi_cols = st.columns(4)
+kpi_cols[0].metric("Último valor", f"{latest_value:.2f} {unidad}", f"{latest_date}")
+kpi_cols[1].metric("Promedio", f"{mean_value:.2f} {unidad}")
+kpi_cols[2].metric("Mín / Máx", f"{min_value:.2f} / {max_value:.2f} {unidad}")
+if pd.notna(delta_window):
+    kpi_cols[3].metric(f"Cambio {window}d", f"{last_window:.2f} {unidad}", f"{delta_window:+.2f}")
+else:
+    kpi_cols[3].metric(f"Cambio {window}d", f"{last_window:.2f} {unidad}", "N/D")
+
+st.markdown("### Tendencias")
+df_month = (
+    df_dash
+    .assign(month_start=lambda d: d["fecha"].dt.to_period("M").dt.to_timestamp())
+    .groupby("month_start")[station]
+    .mean()
+    .reset_index()
+)
+
+fig_trend, ax_trend = plt.subplots(figsize=(12, 4), constrained_layout=True)
+ax_trend.plot(df_month["month_start"], df_month[station], linewidth=2.2)
+ax_trend.set_ylabel(f"{station} {unidad}")
+ax_trend.grid(True, alpha=0.3)
+ax_trend.xaxis.set_major_locator(mdates.AutoDateLocator())
+ax_trend.xaxis.set_major_formatter(mdates.ConciseDateFormatter(mdates.AutoDateLocator()))
+st.pyplot(fig_trend)
+
+st.markdown("### Desglose mensual por año")
+df_table = (
+    df_dash
+    .assign(month=lambda d: d["fecha"].dt.month)
+    .pivot_table(index="month", columns="year", values=station, aggfunc="mean")
+    .sort_index()
+)
+df_table.index = df_table.index.map(lambda m: meses_abrev[str(m).zfill(2)])
+st.dataframe(df_table.style.format("{:.2f}"), use_container_width=True)
+
+st.markdown("---")
+
 df_plot = df[df["year"].isin(selected_years)][["year", "month", "day", station]].copy()
 df_plot[station] = df_plot[station].replace(0, pd.NA)
 
